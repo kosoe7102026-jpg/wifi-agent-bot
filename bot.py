@@ -2,7 +2,7 @@ import telebot
 from telebot import types
 import sqlite3
 
-BOT_TOKEN = "8858666249:AAFwB3KahSzk4HRy"
+BOT_TOKEN = "8858666249:AAFwB3KahSzk4HRyx3ez1Xh4anYmfYFyl8s"
 ADMIN_ID = 8514199623
 CREDIT_LIMIT = 50000
 
@@ -16,102 +16,120 @@ cursor = conn.cursor()
 cursor.execute('''CREATE TABLE IF NOT EXISTS agents (
     agent_id INTEGER PRIMARY KEY,
     name TEXT,
+    phone TEXT,
     balance INTEGER DEFAULT 0,
-    credit_limit INTEGER DEFAULT 50000
+    credit_limit INTEGER DEFAULT 50000,
+    status TEXT DEFAULT 'pending'
 )''')
 
-# Wi-Fi Packages Table (Dynamic Pricing)
+# Wi-Fi Packages Table
 cursor.execute('''CREATE TABLE IF NOT EXISTS packages (
-    gb INTEGER PRIMARY KEY,
+    package_name TEXT PRIMARY KEY,
     price INTEGER
 )''')
 
-# Initial Default Packages Setup
+# Initial Default Prices
 default_packages = [
-    (1, 400), (2, 800), (3, 1200), (4, 1600), (5, 2000),
-    (6, 2400), (7, 2800), (8, 3200), (9, 3600), (10, 4000)
+    ("1GB", 400),
+    ("2GB", 800),
+    ("3GB", 1200),
+    ("4GB", 1600),
+    ("5GB", 2000),
+    ("6GB", 2000),
+    ("7GB", 2800),
+    ("8GB", 3200),
+    ("9GB", 3600),
+    ("10GB", 4000)
 ]
-cursor.executemany('''INSERT OR IGNORE INTO packages (gb, price) VALUES (?, ?)''', default_packages)
+cursor.executemany("INSERT OR IGNORE INTO packages VALUES (?, ?)", default_packages)
 conn.commit()
 
-# --- Helper Functions ---
-def get_packages():
-    """Database ထဲမှ လက်ရှိ Package ဈေးနှုန်းများကို ဆွဲထုတ်ခြင်း"""
-    cursor.execute("SELECT gb, price FROM packages ORDER BY gb ASC")
-    return cursor.fetchall()
 
-def update_package_price(gb, price):
-    """ဈေးနှုန်း ပြင်ဆင်ခြင်း သို့မဟုတ် Package အသစ် ထည့်သွင်းခြင်း"""
-    cursor.execute("INSERT OR REPLACE INTO packages (gb, price) VALUES (?, ?)", (gb, price))
-    conn.commit()
-
-# --- Admin Commands for Pricing ---
-
-@bot.message_handler(commands=['setprice'])
-def set_price_command(message):
-    """Admin သီးသန့် ဈေးနှုန်းပြင်ဆင်သည့် Command: /setprice 1 500"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ ဤ Command အား အသုံးပြုခွင့် မရှိပါ။")
-        return
-
-    try:
-        args = message.text.split()
-        if len(args) != 3:
-            bot.reply_to(message, "⚠️ အသုံးပြုပုံ မှားယွင်းနေပါသည်။\nဥပမာ - `/setprice 1 500` (1GB ကို 500 ကျပ် သတ်မှတ်ခြင်း)", parse_mode="Markdown")
-            return
-
-        gb = int(args[1])
-        price = int(args[2])
-
-        update_package_price(gb, price)
-        bot.reply_to(message, f"✅ *အောင်မြင်ပါသည်*\n\n{gb} GB ဈေးနှုန်းအား *{price:,} MMK* သို့ ပြောင်းလဲ သတ်မှတ်လိုက်ပါပြီ။", parse_mode="Markdown")
-
-    except ValueError:
-        bot.reply_to(message, "❌ ဂဏန်းအချက်အလက်များကိုသာ ရိုက်ထည့်ပေးပါ။ (ဥပမာ: /setprice 2 900)")
+# --- Admin Commands ---
 
 @bot.message_handler(commands=['prices'])
-def show_prices_command(message):
-    """လက်ရှိ Wi-Fi ဈေးနှုန်းအားလုံးကို ကြည့်ရှုခြင်း"""
-    packages = get_packages()
-    text = "📶 *လက်ရှိ သတ်မှတ်ထားသော Wi-Fi ဈေးနှုန်းများ*\n\n"
-    for gb, price in packages:
-        text += f"• {gb} GB — *{price:,} MMK*\n"
-    
-    if message.from_user.id == ADMIN_ID:
-        text += "\n💡 _Admin အနေဖြင့် ဈေးနှုန်းပြင်လိုပါက `/setprice <GB> <ဈေးနှုန်း>` ဟု ရိုက်ပို့နိုင်ပါသည်။_"
+def view_prices(message):
+    if message.chat.id != ADMIN_ID:
+        return
+    cursor.execute("SELECT package_name, price FROM packages")
+    rows = cursor.fetchall()
+    text = "📶 လက်ရှိ Wi-Fi ဈေးနှုန်းများ -\n\n"
+    for row in rows:
+        text += f"🔹 {row[0]} = {row[1]} MMK\n"
+    bot.send_message(message.chat.id, text)
 
-    bot.reply_to(message, text, parse_mode="Markdown")
+@bot.message_handler(commands=['setprice'])
+def set_price(message):
+    if message.chat.id != ADMIN_ID:
+        return
+    # ပုံစံ: /setprice 1GB 400
+    try:
+        parts = message.text.split()
+        pkg_name = parts[1].upper()
+        new_price = int(parts[2])
+        cursor.execute("INSERT OR REPLACE INTO packages (package_name, price) VALUES (?, ?)", (pkg_name, new_price))
+        conn.commit()
+        bot.reply_to(message, f"✅ {pkg_name} ဈေးနှုန်းကို {new_price} MMK သို့ ပြောင်းလဲသတ်မှတ်ပြီးပါပြီ။")
+    except Exception:
+        bot.reply_to(message, "⚠️ ပုံစံမှားယွင်းနေပါသည်။\nဥပမာ - `/setprice 1GB 400` ဟု ရိုက်ပို့ပါ။")
 
-# --- Agent & User Interactions ---
 
-@bot.message_handler(commands=['start', 'menu'])
-def start_menu(message):
-    packages = get_packages()
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    
-    buttons = []
-    for gb, price in packages:
-        btn = types.InlineKeyboardButton(f"{gb}GB ({price:,} Ks)", callback_data=f"buy_{gb}_{price}")
-        buttons.append(btn)
-    
-    markup.add(*buttons)
-    bot.send_message(
-        message.chat.id,
-        "👋 မင်္ဂလာပါ၊ ဝယ်ယူလိုသော Wi-Fi Package အား ရွေးချယ်ပေးပါ-",
-        reply_markup=markup
-    )
+# --- User & Agent Commands ---
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
-def handle_buy_package(call):
-    _, gb, price = call.data.split('_')
-    bot.answer_callback_query(call.id)
-    bot.send_message(
-        call.message.chat.id,
-        f"✅ ရွေးချယ်ထားသော ပက်ကေ့ဂျ် - *{gb} GB*\nကျသင့်ငွေ - *{int(price):,} MMK*\n\nVoucher Code ထုတ်ယူရန် လုပ်ဆောင်နေပါသည်...",
-        parse_mode="Markdown"
-    )
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    user_id = message.chat.id
+    cursor.execute("SELECT status FROM agents WHERE agent_id = ?", (user_id,))
+    agent = cursor.fetchone()
 
-if __name__ == '__main__':
-    print("Bot is running...")
-    bot.infinity_polling()
-            
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    if agent and agent[0] == 'approved':
+        markup.add("🎟 Voucher ဝယ်ယူရန်", "💰 လက်ကျန်ငွေစစ်ရန်")
+        markup.add("📋 ဈေးနှုန်းစာရင်းကြည့်ရန်")
+        bot.send_message(user_id, "မင်္ဂလာပါ Reseller Agent ကြီးခင်ဗျာ။ စနစ်ကို အသုံးပြုနိုင်ပါပြီ။", reply_markup=markup)
+    else:
+        markup.add("📝 Agent လျှောက်ထားရန်", "📋 ဈေးနှုန်းစာရင်းကြည့်ရန်")
+        bot.send_message(user_id, "Reyee Wi-Fi Agent System မှ ကြိုဆိုပါသည်။", reply_markup=markup)
+
+@bot.message_handler(func=lambda msg: msg.text == "📋 ဈေးနှုန်းစာရင်းကြည့်ရန်")
+def show_pricing(message):
+    cursor.execute("SELECT package_name, price FROM packages")
+    rows = cursor.fetchall()
+    text = "📶 Wi-Fi Package ဈေးနှုန်းများ -\n\n"
+    for row in rows:
+        text += f"🔹 {row[0]} - {row[1]} MMK\n"
+    bot.send_message(message.chat.id, text)
+
+@bot.message_handler(func=lambda msg: msg.text == "📝 Agent လျှောက်ထားရန်")
+def register_prompt(message):
+    bot.send_message(message.chat.id, "Agent အဖြစ် လျှောက်ထားရန် သင်၏ အမည်နှင့် ဖုန်းနံပါတ်ကို အောက်ပါအတိုင်း ပေးပို့ပေးပါ -\n\nဥပမာ: `Agent Ko Soe - 09123456789`")
+
+@bot.message_handler(func=lambda msg: msg.text and msg.text.startswith("Agent "))
+def handle_agent_registration(message):
+    user_id = message.chat.id
+    details = message.text.replace("Agent ", "").strip()
+    cursor.execute("INSERT OR REPLACE INTO agents (agent_id, name, phone, status) VALUES (?, ?, ?, 'pending')", 
+                   (user_id, details, details))
+    conn.commit()
+
+    bot.reply_to(message, "✅ Agent လျှောက်ထားလွှာ ပေးပို့ပြီးပါပြီ။ Admin ဘက်မှ အတည်ပြုပြီးပါက အကြောင်းကြားပေးပါမည်။")
+
+    # Admin ထံ အသိပေးချက်ပို့ခြင်း
+    admin_markup = types.InlineKeyboardMarkup()
+    approve_btn = types.InlineKeyboardButton("အတည်ပြုမည်", callback_data=f"approve_{user_id}")
+    admin_markup.add(approve_btn)
+    bot.send_message(ADMIN_ID, f"🔔 Agent အသစ် လျှောက်ထားလာပါသည် -\nID: {user_id}\nအချက်အလက်: {details}", reply_markup=admin_markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("approve_"))
+def approve_agent(call):
+    if call.message.chat.id != ADMIN_ID:
+        return
+    agent_id = int(call.data.split("_")[1])
+    cursor.execute("UPDATE agents SET status = 'approved' WHERE agent_id = ?", (agent_id,))
+    conn.commit()
+
+    bot.send_message(agent_id, "🎉 သင်၏ Reseller Agent အကောင့်ကို Admin မှ အတည်ပြုလိုက်ပါပြီ။ /start ကို ပြန်နှိပ်၍ စတင်သုံးနိုင်ပါပြီ။")
+    bot.edit_message_text(f"✅ Agent ID {agent_id} ကို အတည်ပြုပြီးပါပြီ။", call.message.chat.id, call.message.id)
+
+print("Bot is starting...")
+bot.infinity_polling()
