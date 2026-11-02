@@ -1,59 +1,117 @@
 import telebot
 from telebot import types
 import sqlite3
-import datetime
-import random
-import string
 
-BOT_TOKEN = "8858666249:AAFwB3KahSzk4HRyx3ez1Xh4anYmfYFyl8s"
+BOT_TOKEN = "8858666249:AAFwB3KahSzk4HRy"
 ADMIN_ID = 8514199623
 CREDIT_LIMIT = 50000
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# --- Database Setup ---
 conn = sqlite3.connect("wifi_system.db", check_same_thread=False)
 cursor = conn.cursor()
 
-cursor.execute('''CREATE TABLE IF NOT EXISTS agents (telegram_id INTEGER PRIMARY KEY, name TEXT, debt INTEGER DEFAULT 0, status TEXT DEFAULT 'active')''')
-cursor.execute('''CREATE TABLE IF NOT EXISTS vouchers (id INTEGER PRIMARY KEY AUTOINCREMENT, package_type TEXT, code TEXT UNIQUE, status TEXT DEFAULT 'available')''')
-cursor.execute('''CREATE TABLE IF NOT EXISTS sales_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER, agent_name TEXT, package_type TEXT, price INTEGER, code TEXT, issue_time TEXT)''')
-cursor.execute('''CREATE TABLE IF NOT EXISTS unlock_codes (code TEXT PRIMARY KEY, agent_id INTEGER, is_used INTEGER DEFAULT 0)''')
+# Reseller Agents Table
+cursor.execute('''CREATE TABLE IF NOT EXISTS agents (
+    agent_id INTEGER PRIMARY KEY,
+    name TEXT,
+    balance INTEGER DEFAULT 0,
+    credit_limit INTEGER DEFAULT 50000
+)''')
+
+# Wi-Fi Packages Table (Dynamic Pricing)
+cursor.execute('''CREATE TABLE IF NOT EXISTS packages (
+    gb INTEGER PRIMARY KEY,
+    price INTEGER
+)''')
+
+# Initial Default Packages Setup
+default_packages = [
+    (1, 400), (2, 800), (3, 1200), (4, 1600), (5, 2000),
+    (6, 2400), (7, 2800), (8, 3200), (9, 3600), (10, 4000)
+]
+cursor.executemany('''INSERT OR IGNORE INTO packages (gb, price) VALUES (?, ?)''', default_packages)
 conn.commit()
 
-NORMAL_PACKAGES = {"1GB": 400, "2GB": 800, "3GB": 1200, "4GB": 1600, "5GB": 2000, "6GB": 2400, "7GB": 2800, "8GB": 3200, "9GB": 3600, "10GB": 4000}
-VIP_PACKAGES = {"VIP 2GB": 2000, "VIP 4GB": 4000, "VIP 8GB": 8000, "VIP 10GB": 10000, "VIP 12GB": 12000, "VIP 15GB": 15000}
+# --- Helper Functions ---
+def get_packages():
+    """Database ထဲမှ လက်ရှိ Package ဈေးနှုန်းများကို ဆွဲထုတ်ခြင်း"""
+    cursor.execute("SELECT gb, price FROM packages ORDER BY gb ASC")
+    return cursor.fetchall()
 
-def generate_random_code(length=6):
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+def update_package_price(gb, price):
+    """ဈေးနှုန်း ပြင်ဆင်ခြင်း သို့မဟုတ် Package အသစ် ထည့်သွင်းခြင်း"""
+    cursor.execute("INSERT OR REPLACE INTO packages (gb, price) VALUES (?, ?)", (gb, price))
+    conn.commit()
 
-def get_current_time():
-    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+# --- Admin Commands for Pricing ---
 
-def get_main_keyboard(user_id):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    if user_id == ADMIN_ID:
-        markup.add("📦 စတော့ထည့်မည်", "👥 Agent များစာရင်း")
-        markup.add("🔓 Agent Unlock ပေးမည်", "📊 ၁ လစာ စာရင်းစစ်ရန်")
-        markup.add("🧹 ၁ လကျော် ကုဒ်ဟောင်းရှင်းမည်", "❌ Agent ထုတ်မည်")
-    markup.add("📶 Normal Package", "⭐ VIP Package")
-    markup.add("💰 လက်ကျန် အကြွေးစာရင်း", "🔑 Unlock Code ထည့်မည်")
-    return markup
-
-@bot.message_handler(commands=['start'])
-def start_cmd(message):
-    uid = message.from_user.id
-    cursor.execute("SELECT name, debt, status FROM agents WHERE telegram_id = ?", (uid,))
-    row = cursor.fetchone()
-    if uid == ADMIN_ID:
-        bot.send_message(uid, "👑 မင်္ဂလာပါ Admin! စနစ်အား စီမံခန့်ခွဲနိုင်ပါပြီ။", reply_markup=get_main_keyboard(uid))
+@bot.message_handler(commands=['setprice'])
+def set_price_command(message):
+    """Admin သီးသန့် ဈေးနှုန်းပြင်ဆင်သည့် Command: /setprice 1 500"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ ဤ Command အား အသုံးပြုခွင့် မရှိပါ။")
         return
-    if not row:
-        bot.send_message(uid, f"❌ သင်သည် စနစ်တွင် မှတ်ပုံမတင်ရသေးပါ။\nသင့် Telegram ID: `{uid}` ကို Admin ထံ ပေးပို့၍ ခွင့်ပြုချက်တောင်းပါ။", parse_mode="Markdown")
-        return
-    name, debt, status = row
-    if status == 'blocked':
-        bot.send_message(uid, "🚫 သင့်အကောင့်အား ရပ်ဆိုင်းထားပါသည်။ Admin ထံ ဆက်သွယ်ပါ။")
-        return
-    bot.send_message(uid, f"👋 မင်္ဂလာပါ {name}!\nလက်ရှိ အကြွေး
 
- 
+    try:
+        args = message.text.split()
+        if len(args) != 3:
+            bot.reply_to(message, "⚠️ အသုံးပြုပုံ မှားယွင်းနေပါသည်။\nဥပမာ - `/setprice 1 500` (1GB ကို 500 ကျပ် သတ်မှတ်ခြင်း)", parse_mode="Markdown")
+            return
+
+        gb = int(args[1])
+        price = int(args[2])
+
+        update_package_price(gb, price)
+        bot.reply_to(message, f"✅ *အောင်မြင်ပါသည်*\n\n{gb} GB ဈေးနှုန်းအား *{price:,} MMK* သို့ ပြောင်းလဲ သတ်မှတ်လိုက်ပါပြီ။", parse_mode="Markdown")
+
+    except ValueError:
+        bot.reply_to(message, "❌ ဂဏန်းအချက်အလက်များကိုသာ ရိုက်ထည့်ပေးပါ။ (ဥပမာ: /setprice 2 900)")
+
+@bot.message_handler(commands=['prices'])
+def show_prices_command(message):
+    """လက်ရှိ Wi-Fi ဈေးနှုန်းအားလုံးကို ကြည့်ရှုခြင်း"""
+    packages = get_packages()
+    text = "📶 *လက်ရှိ သတ်မှတ်ထားသော Wi-Fi ဈေးနှုန်းများ*\n\n"
+    for gb, price in packages:
+        text += f"• {gb} GB — *{price:,} MMK*\n"
+    
+    if message.from_user.id == ADMIN_ID:
+        text += "\n💡 _Admin အနေဖြင့် ဈေးနှုန်းပြင်လိုပါက `/setprice <GB> <ဈေးနှုန်း>` ဟု ရိုက်ပို့နိုင်ပါသည်။_"
+
+    bot.reply_to(message, text, parse_mode="Markdown")
+
+# --- Agent & User Interactions ---
+
+@bot.message_handler(commands=['start', 'menu'])
+def start_menu(message):
+    packages = get_packages()
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    buttons = []
+    for gb, price in packages:
+        btn = types.InlineKeyboardButton(f"{gb}GB ({price:,} Ks)", callback_data=f"buy_{gb}_{price}")
+        buttons.append(btn)
+    
+    markup.add(*buttons)
+    bot.send_message(
+        message.chat.id,
+        "👋 မင်္ဂလာပါ၊ ဝယ်ယူလိုသော Wi-Fi Package အား ရွေးချယ်ပေးပါ-",
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
+def handle_buy_package(call):
+    _, gb, price = call.data.split('_')
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id,
+        f"✅ ရွေးချယ်ထားသော ပက်ကေ့ဂျ် - *{gb} GB*\nကျသင့်ငွေ - *{int(price):,} MMK*\n\nVoucher Code ထုတ်ယူရန် လုပ်ဆောင်နေပါသည်...",
+        parse_mode="Markdown"
+    )
+
+if __name__ == '__main__':
+    print("Bot is running...")
+    bot.infinity_polling()
+            
